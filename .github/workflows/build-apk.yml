@@ -30,6 +30,10 @@ jobs:
       - name: Crear proyecto Android
         run: |
           npx cap add android
+          # el revisor en segundo plano necesita su motor de JavaScript (.aar) en la lista de carpetas
+          G=android/app/build.gradle
+          grep -q "background-runner/android/src/main/libs" $G || sed -i "s#dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'#&\n        dirs '../../node_modules/@capacitor/background-runner/android/src/main/libs', 'libs'#" $G
+          grep -n "background-runner" $G
           M=android/app/src/main/AndroidManifest.xml
           for P in POST_NOTIFICATIONS SCHEDULE_EXACT_ALARM RECEIVE_BOOT_COMPLETED; do
             grep -q "android.permission.$P" $M || sed -i "s#<application#<uses-permission android:name=\"android.permission.$P\" />\n    <application#" $M
