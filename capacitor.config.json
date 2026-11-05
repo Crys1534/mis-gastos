@@ -4,5 +4,15 @@
   "webDir": "www",
   "android": {
     "allowMixedContent": false
+  },
+  "plugins": {
+    "BackgroundRunner": {
+      "label": "com.misgastos.app.check",
+      "src": "runners/runner.js",
+      "event": "checkTel",
+      "repeat": true,
+      "interval": 15,
+      "autoStart": true
+    }
   }
 }

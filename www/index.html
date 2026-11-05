@@ -128,7 +128,6 @@ function load(){
 function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}}
 
 /* ---------- notificaciones ---------- */
-var NTFY_TOPIC='misgastos-24e0057f2a424f92';
 function notiPlugin(){try{return window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.LocalNotifications}catch(e){return null}}
 /* Recordatorio diario a las 10 PM: ¿Que compraste hoy? */
 function programarRecordatorio(){
@@ -146,11 +145,18 @@ function programarRecordatorio(){
       }]})});
   }).catch(function(){});
 }
-/* Aviso a los celulares cuando se anota el recibo del telefono (llega con la app de ntfy) */
-function avisarRecibo(msg){
+/* Avisa al revisor de segundo plano que este celular ya conoce el recibo (para no avisarse a si mismo) */
+function marcarVisto(id){
   try{
-    fetch('https://ntfy.sh/',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({topic:NTFY_TOPIC,title:'Mis gastos',message:msg,tags:['telephone_receiver','white_check_mark']})}).catch(function(){});
+    var R=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.BackgroundRunner;
+    if(R)R.dispatchEvent({label:'com.misgastos.app.check',event:'markSeen',details:{id:String(id)}}).catch(function(){});
+  }catch(e){}
+}
+/* Permiso de notificaciones tambien para el revisor de segundo plano */
+function permisoSegundoPlano(){
+  try{
+    var R=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.BackgroundRunner;
+    if(R)R.requestPermissions({apis:['notifications']}).catch(function(){});
   }catch(e){}
 }
 
@@ -444,7 +450,7 @@ function guardar(){
   if(!(n>0)){form.field='amt';form.kb=true;paintForm();paintKb();return err('Escribe cu\u00e1nto fue, solo con n\u00fameros.')}
   db.items.push({id:Date.now(),date:today(),amount:Math.round(n*100)/100,note:form.kind==='gasto'?form.note.trim():'',service:form.kind==='recibo'?form.service:null,p:1});
   if(form.kind==='recibo')view='recibos';
-  if(form.kind==='recibo'&&form.service==='tel')avisarRecibo('Recibo del Tel\u00e9fono fue pagado');
+  if(form.kind==='recibo'&&form.service==='tel')marcarVisto(db.items[db.items.length-1].id);
   form=null;save();render();pushPending();
   burst();pop('\u00a1Guardado!','\u2705');
 }
@@ -477,6 +483,7 @@ try{
 render();
 startSync();
 programarRecordatorio();
+permisoSegundoPlano();
 window.addEventListener('online',function(){startSync();pushPending()});
 </script>
 </body>
