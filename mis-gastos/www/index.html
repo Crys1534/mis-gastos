@@ -95,6 +95,8 @@ label{display:block;font-size:20px;font-weight:700;margin:18px 0 6px}
 <div id="app"><main id="v"></main><div id="kb"></div><nav id="nav"></nav></div>
 <div id="fx"></div>
 <div id="pop" role="status"></div>
+<script src="vendor/firebase-app-compat.js"></script>
+<script src="vendor/firebase-firestore-compat.js"></script>
 <script>
 var KEY='misgastos.v1';
 var MES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
@@ -110,8 +112,64 @@ var REDUCE=false;try{REDUCE=!!(window.matchMedia&&matchMedia('(prefers-reduced-m
 var db=load(),view='inicio',hist='dia',form=null,lastTotal=0,popT=0,fxT=0,dayLimit=30,kbSig='';
 
 /* ---------- datos ---------- */
-function load(){try{var d=JSON.parse(localStorage.getItem(KEY));if(d&&Array.isArray(d.items))return{items:d.items}}catch(e){}return{items:[]}}
+function load(){
+  try{
+    var d=JSON.parse(localStorage.getItem(KEY));
+    if(d&&Array.isArray(d.items)){
+      var r={items:d.items,pd:Array.isArray(d.pd)?d.pd:[]};
+      /* primera vez con sincronizacion: todo lo que ya estaba anotado se sube a la nube */
+      if(!localStorage.getItem(KEY+'.sync')){r.items.forEach(function(x){x.p=1});try{localStorage.setItem(KEY+'.sync','1')}catch(e){}}
+      return r;
+    }
+  }catch(e){}
+  try{localStorage.setItem(KEY+'.sync','1')}catch(e){}
+  return{items:[],pd:[]};
+}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}}
+
+/* ---------- nube (Firebase) ---------- */
+var COL='gastos_mama',fs=null,syncOn=false;
+try{
+  firebase.initializeApp({
+    apiKey:"AIzaSyBnX__R6A6lQw_KuzZxqHRkzZyj10S_4wU",
+    authDomain:"aula-virtual-79e4d.firebaseapp.com",
+    projectId:"aula-virtual-79e4d",
+    storageBucket:"aula-virtual-79e4d.firebasestorage.app",
+    messagingSenderId:"384731632952",
+    appId:"1:384731632952:web:9b4facff98bc7f6ebf5dcd"
+  });
+  fs=firebase.firestore();
+}catch(e){fs=null}
+function remoteDoc(x){return{id:x.id,date:x.date,amount:x.amount,note:x.note||'',service:x.service||null}}
+function pushPending(){
+  if(!fs)return;
+  db.items.forEach(function(x){
+    if(!x.p)return;
+    fs.collection(COL).doc(String(x.id)).set(remoteDoc(x)).then(function(){delete x.p;save()}).catch(function(){});
+  });
+  db.pd.slice().forEach(function(id){
+    fs.collection(COL).doc(String(id)).delete().then(function(){db.pd=db.pd.filter(function(z){return z!==id});save()}).catch(function(){});
+  });
+}
+function startSync(){
+  if(!fs||syncOn)return;
+  syncOn=true;
+  try{
+    fs.collection(COL).onSnapshot(function(snap){
+      var remote=[];
+      snap.forEach(function(d){
+        var r=d.data();
+        if(r&&typeof r.amount==='number'&&r.date&&db.pd.indexOf(r.id)<0)remote.push({id:r.id,date:r.date,amount:r.amount,note:r.note||'',service:r.service||null});
+      });
+      var ids={};remote.forEach(function(x){ids[x.id]=1});
+      /* lo que aun no se ha subido se conserva */
+      db.items.forEach(function(x){if(x.p&&!ids[x.id])remote.push(x)});
+      db.items=remote;save();
+      if(!form)render(true);
+    },function(){syncOn=false});
+  }catch(e){syncOn=false}
+  pushPending();
+}
 function pad(n){return String(n).padStart(2,'0')}
 function dkey(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())}
 function today(){return dkey(new Date())}
@@ -357,9 +415,9 @@ function err(m){document.getElementById('err').textContent=m}
 function guardar(){
   var n=num(form.amt);
   if(!(n>0)){form.field='amt';form.kb=true;paintForm();paintKb();return err('Escribe cu\u00e1nto fue, solo con n\u00fameros.')}
-  db.items.push({id:Date.now(),date:today(),amount:Math.round(n*100)/100,note:form.kind==='gasto'?form.note.trim():'',service:form.kind==='recibo'?form.service:null});
+  db.items.push({id:Date.now(),date:today(),amount:Math.round(n*100)/100,note:form.kind==='gasto'?form.note.trim():'',service:form.kind==='recibo'?form.service:null,p:1});
   if(form.kind==='recibo')view='recibos';
-  form=null;save();render();
+  form=null;save();render();pushPending();
   burst();pop('\u00a1Guardado!','\u2705');
 }
 function atras(){
@@ -381,7 +439,7 @@ document.addEventListener('click',function(e){
   else if(a==='back')atras();
   else if(a==='save')guardar();
   else if(a==='del'){
-    if(confirm('\u00bfBorrar este gasto?')){db.items=db.items.filter(function(x){return String(x.id)!==v});save();render(true)}
+    if(confirm('\u00bfBorrar este gasto?')){var gone=db.items.filter(function(x){return String(x.id)===v})[0];db.items=db.items.filter(function(x){return String(x.id)!==v});if(gone)db.pd.push(gone.id);save();render(true);pushPending()}
   }
 });
 try{
@@ -389,6 +447,8 @@ try{
   if(A)A.addListener('backButton',function(){if(!atras())A.exitApp()});
 }catch(e){}
 render();
+startSync();
+window.addEventListener('online',function(){startSync();pushPending()});
 </script>
 </body>
 </html>

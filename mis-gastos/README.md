@@ -10,7 +10,7 @@ App sencilla para organizar los gastos del mes, pensada para una persona mayor: 
 - Historial: por día, por mes y por año.
 - Animaciones: contador que sube, lluvia de monedas y estrellas al guardar, rebote en las pestañas. No usa sonidos.
 
-Los datos se guardan solo en el celular. Si se desinstala la app, se borran.
+Los gastos se guardan en el celular y también en la nube (Firebase, proyecto aula-virtual, colección `gastos_mama`). Todos los celulares con la app ven los mismos gastos, y si se desinstala la app los datos siguen en la nube.
 
 ## Cómo obtener el APK
 
