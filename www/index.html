@@ -89,6 +89,15 @@ label{display:block;font-size:20px;font-weight:700;margin:18px 0 6px}
   .fx{display:none}
   #pop.show{animation:none;opacity:1}
 }
+.card{position:relative;overflow:hidden;color:#fff;border-radius:24px;padding:20px 20px 18px;margin-bottom:18px;background:linear-gradient(135deg,#1B2B34,#0F4C4A 55%,#14706B);box-shadow:0 6px 0 #072524}
+.card:before{content:"";position:absolute;right:-60px;bottom:-70px;width:200px;height:200px;border-radius:50%;background:rgba(246,185,59,.18)}
+.card .lbl{padding-right:0}
+.cchip{display:block;width:46px;height:34px;border-radius:8px;margin-bottom:14px;background:linear-gradient(135deg,#F6D77A,#C98F12)}
+.cin{position:relative;opacity:.92}
+.step{display:flex;align-items:center;gap:8px;background:#fff;border:2px solid var(--line);border-radius:16px;padding:6px;min-height:64px}
+.step button{width:60px;height:52px;border-radius:12px;background:var(--mint);border:1px solid var(--line);font-size:30px;font-weight:800;color:var(--pine)}
+.step button:active{background:#D2E8E1}
+.step b{flex:1;text-align:center;font-size:26px}
 </style>
 </head>
 <body>
@@ -113,17 +122,20 @@ var db=load(),view='inicio',hist='dia',form=null,lastTotal=0,popT=0,fxT=0,dayLim
 
 /* ---------- datos ---------- */
 function load(){
+  var r={items:[],pd:[],inc:[],rules:[],pdi:[],pdr:[],seeded:false};
   try{
     var d=JSON.parse(localStorage.getItem(KEY));
     if(d&&Array.isArray(d.items)){
-      var r={items:d.items,pd:Array.isArray(d.pd)?d.pd:[]};
+      r.items=d.items;
+      ['pd','inc','rules','pdi','pdr'].forEach(function(k){if(Array.isArray(d[k]))r[k]=d[k]});
+      r.seeded=!!d.seeded;
       /* primera vez con sincronizacion: todo lo que ya estaba anotado se sube a la nube */
       if(!localStorage.getItem(KEY+'.sync')){r.items.forEach(function(x){x.p=1});try{localStorage.setItem(KEY+'.sync','1')}catch(e){}}
       return r;
     }
   }catch(e){}
   try{localStorage.setItem(KEY+'.sync','1')}catch(e){}
-  return{items:[],pd:[]};
+  return r;
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}}
 
@@ -176,6 +188,7 @@ try{
 function remoteDoc(x){return{id:x.id,date:x.date,amount:x.amount,note:x.note||'',service:x.service||null}}
 function pushPending(){
   if(!fs)return;
+  pushExtra();
   db.items.forEach(function(x){
     if(!x.p)return;
     fs.collection(COL).doc(String(x.id)).set(remoteDoc(x)).then(function(){delete x.p;save()}).catch(function(){});
@@ -185,10 +198,12 @@ function pushPending(){
   });
 }
 function startSync(){
+  startExtra();
   if(!fs||syncOn)return;
   syncOn=true;
   try{
     fs.collection(COL).onSnapshot(function(snap){
+      if(snap.metadata&&snap.metadata.fromCache)return; /* sin internet no se borra lo que ya hay en el celular */
       var remote=[];
       snap.forEach(function(d){
         var r=d.data();
@@ -276,13 +291,170 @@ function countUp(){
   }catch(e){}
 }
 
+/* ---------- tarjeta: entradas de dinero ---------- */
+var SEEDS=[
+  {id:'pension',n:'Pensión',e:'\u{1F9D3}',amt:9600,every:1,day:1,start:'2026-11',off:false},
+  {id:'aguinaldo',n:'Aguinaldo',e:'\u{1F381}',amt:9600,every:12,day:15,start:'2026-12',off:false},
+  {id:'renta',n:'Renta',e:'\u{1F3E0}',amt:3000,every:1,day:15,start:'2026-11',off:false},
+  {id:'regia',n:'Tarjeta Regia Plus',e:'\u{1F4B3}',amt:2000,every:2,day:7,start:'2026-11',off:false},
+  {id:'pension60',n:'Pensión 60-64 años',e:'\u{1F475}',amt:3100,every:2,day:1,start:'2026-11',off:true}
+];
+function dim(y,m){return new Date(y,m,0).getDate()}
+function fechaOcc(y,m,day){return y+'-'+pad(m)+'-'+pad(Math.min(day,dim(y,m)))}
+/* fechas que ya tocaron (desde que se creó la entrada hasta "hasta") y que todavía no se han abonado */
+function ocurrencias(r,hasta){
+  var out=[],s=r.start.split('-'),y=Number(s[0]),m=Number(s[1]),e=hasta.split('-'),ey=Number(e[0]),em=Number(e[1]),n=0,d;
+  while((y<ey||(y===ey&&m<=em))&&n<800){
+    d=fechaOcc(y,m,r.day);
+    if(d>=r.from&&d<=hasta&&(!r.last||d>r.last))out.push(d);
+    m+=r.every;while(m>12){m-=12;y++}
+    n++;
+  }
+  return out;
+}
+function proxima(r,t){
+  t=t||today();
+  var s=r.start.split('-'),y=Number(s[0]),m=Number(s[1]),n=0,d;
+  while(n<800){
+    d=fechaOcc(y,m,r.day);
+    if(d>=t&&d>=r.from&&(!r.last||d>r.last))return d;
+    m+=r.every;while(m>12){m-=12;y++}
+    n++;
+  }
+  return null;
+}
+function ruleOf(id){for(var i=0;i<db.rules.length;i++)if(db.rules[i].id===id)return db.rules[i]}
+function saldoTotal(){return sum(db.inc)-sum(db.items)}
+function procesarEntradas(){
+  var t=today(),nuevo=0,cambio=false;
+  db.rules.forEach(function(r){
+    if(r.off)return;
+    ocurrencias(r,t).forEach(function(d){
+      var id=r.id+'_'+d;
+      if(!db.inc.some(function(x){return x.id===id})){db.inc.push({id:id,date:d,amount:r.amt,note:r.n,rule:r.id,p:1});nuevo++}
+      r.last=d;r.p=1;cambio=true;
+    });
+  });
+  if(!cambio)return;
+  save();pushPending();
+  if(!form){render(true);if(nuevo)pop('¡Entró dinero!','\u{1F4B5}')}
+}
+function seedLocal(){
+  if(db.seeded)return;
+  var t=today();
+  SEEDS.forEach(function(s){
+    if(ruleOf(s.id))return;
+    var r={};for(var k in s)r[k]=s[k];
+    r.from=t;r.last='';r.p=1;db.rules.push(r);
+  });
+  db.seeded=true;save();pushPending();procesarEntradas();
+  if(!form)render(true);
+}
+function pushExtra(){
+  db.inc.forEach(function(x){
+    if(!x.p)return;
+    fs.collection('entradas_mama').doc(String(x.id)).set({id:String(x.id),date:x.date,amount:x.amount,note:x.note||'',rule:x.rule||null}).then(function(){delete x.p;save()}).catch(function(){});
+  });
+  db.rules.forEach(function(r){
+    if(!r.p)return;
+    fs.collection('reglas_mama').doc(String(r.id)).set({id:r.id,n:r.n,e:r.e||'',amt:r.amt,every:r.every,day:r.day,start:r.start,from:r.from,last:r.last||'',off:!!r.off}).then(function(){delete r.p;save()}).catch(function(){});
+  });
+  db.pdi.slice().forEach(function(id){
+    fs.collection('entradas_mama').doc(String(id)).delete().then(function(){db.pdi=db.pdi.filter(function(z){return z!==id});save()}).catch(function(){});
+  });
+  db.pdr.slice().forEach(function(id){
+    fs.collection('reglas_mama').doc(String(id)).delete().then(function(){db.pdr=db.pdr.filter(function(z){return z!==id});save()}).catch(function(){});
+  });
+}
+var wOn={},seedT=0;
+function watch(name,col,parse,listName,pdName,done){
+  if(!fs||wOn[name])return;
+  wOn[name]=true;
+  try{
+    fs.collection(col).onSnapshot(function(snap){
+      if(snap.metadata&&snap.metadata.fromCache)return;
+      var remote=[],loc={};
+      db[listName].forEach(function(x){if(x.p)loc[x.id]=x});
+      snap.forEach(function(d){
+        var r=parse(d.data());
+        if(!r||db[pdName].indexOf(r.id)>=0)return;
+        remote.push(loc[r.id]||r);delete loc[r.id];
+      });
+      for(var k in loc)remote.push(loc[k]);
+      db[listName]=remote;save();
+      done(snap.size);
+      if(!form)render(true);
+    },function(){wOn[name]=false;if(name==='rules')seedLocal()});
+  }catch(e){wOn[name]=false}
+}
+function startExtra(){
+  if(!fs)return;
+  watch('inc','entradas_mama',function(r){
+    return r&&r.id!==undefined&&typeof r.amount==='number'&&r.date?{id:String(r.id),date:r.date,amount:r.amount,note:r.note||'',rule:r.rule||null}:null;
+  },'inc','pdi',function(){procesarEntradas()});
+  watch('rules','reglas_mama',function(r){
+    return r&&r.id&&typeof r.amt==='number'&&r.start?{id:String(r.id),n:r.n||'',e:r.e||'\u{1F4B5}',amt:r.amt,every:Number(r.every)||1,day:Number(r.day)||1,start:r.start,from:r.from||'',last:r.last||'',off:!!r.off}:null;
+  },'rules','pdr',function(n){
+    if(!db.seeded){if(n>0)db.seeded=true;else seedLocal()}
+    procesarEntradas();
+  });
+  /* si no hay internet ni respuesta, las entradas de ejemplo se crean igual en este celular */
+  if(!seedT)seedT=setTimeout(function(){if(!db.seeded)seedLocal()},4000);
+}
+
 /* ---------- pantallas ---------- */
-function rowHtml(x,del,showDay,t,y){
+function rowHtml(x,del,showDay,t,y,neg){
   var s=x.service?svc(x.service):null;
   return'<div class="row"><span class="ico"'+(s?' style="background:'+s.c+'"':'')+'>'+(s?s.e:'\u{1F6D2}')+'</span>'
     +'<div class="n">'+esc(label(x))+(showDay?'<div class="sub mu">'+dayLabel(x.date,t,y)+'</div>':'')
     +(del?'<div><button class="del" data-a="del" data-v="'+x.id+'">Borrar</button></div>':'')+'</div>'
-    +'<span class="m">'+money(x.amount)+'</span></div>';
+    +'<span class="m'+(neg?' bad':'')+'">'+(neg?'\u2212':'')+money(x.amount)+'</span></div>';
+}
+
+function fechaLarga(s){
+  if(!s)return'';
+  var p=s.split('-').map(Number);
+  return p[2]+' de '+MES[p[1]-1]+(p[0]!==Number(today().slice(0,4))?' de '+p[0]:'');
+}
+function freqTxt(r){
+  if(r.every===1)return'Cada mes, el día '+r.day;
+  if(r.every===2)return'Cada 2 meses, el día '+r.day;
+  return'Cada año, el '+r.day+' de '+MES[Number(r.start.split('-')[1])-1];
+}
+function inRowHtml(x,t,y){
+  var r=x.rule?ruleOf(x.rule):null;
+  return'<div class="row"><span class="ico" style="background:#DDF3E0">'+(r?esc(r.e):'\u{1F4B5}')+'</span>'
+    +'<div class="n">'+esc(x.note||'Dinero agregado')+'<div class="sub mu">'+dayLabel(x.date,t,y)+'</div>'
+    +'<div><button class="del" data-a="deli" data-v="'+esc(x.id)+'">Borrar</button></div></div>'
+    +'<span class="m ok">+'+money(x.amount)+'</span></div>';
+}
+function tarjeta(){
+  var t=today(),y=yesterday(),mk=mkey(t),saldo=saldoTotal(),ein=0,eout=0,i,h;
+  for(i=0;i<db.inc.length;i++)if(mkey(db.inc[i].date)===mk)ein+=db.inc[i].amount;
+  for(i=0;i<db.items.length;i++)if(mkey(db.items[i].date)===mk)eout+=db.items[i].amount;
+  h='<h1>Mi tarjeta</h1><div class="card"><span class="cchip"></span><p class="lbl">Saldo disponible</p>'
+    +'<p class="big"'+(saldo<0?' style="color:#FFB4AB"':'')+'>'+money(saldo)+'</p>'
+    +'<p class="sub cin">Este mes entró '+money(ein)+' · salió '+money(eout)+'</p></div>';
+  h+='<button class="btn" data-a="addmoney">+ Agregar dinero</button><p class="sub mu" style="margin-bottom:4px">Para sumar dinero que ya tenía guardado.</p>';
+  h+='<h2>Entradas de dinero</h2>';
+  if(!db.rules.length)h+='<div class="empty"><b>\u{1F4B5}</b>Aquí salen las pensiones, rentas y otros ingresos.</div>';
+  else{
+    h+='<div class="list">'+db.rules.map(function(r){
+      var nx=r.off?null:proxima(r);
+      return'<button class="row" data-a="rule" data-v="'+esc(r.id)+'"><span class="ico" style="background:#DDF3E0">'+esc(r.e)+'</span>'
+        +'<div class="n">'+esc(r.n)+'<div class="sub mu">'+freqTxt(r)+'</div>'
+        +'<div class="sub '+(r.off?'bad':'ok')+'">'+(r.off?'En pausa':'Próxima: '+fechaLarga(nx))+'</div></div>'
+        +'<span class="m">'+money(r.amt)+'</span><span class="mu">›</span></button>';
+    }).join('')+'</div>';
+  }
+  h+='<button class="more" data-a="newrule">+ Nueva entrada de dinero</button><h2>Movimientos</h2>';
+  var all=[];
+  db.inc.forEach(function(x){all.push({d:x.date,id:x.id,i:1,x:x})});
+  db.items.forEach(function(x){all.push({d:x.date,id:x.id,i:0,x:x})});
+  all.sort(function(a,b){return a.d<b.d?1:a.d>b.d?-1:(Number(b.id)||0)-(Number(a.id)||0)});
+  all=all.slice(0,15);
+  if(!all.length)return h+'<div class="empty"><b>\u{1F4D2}</b>Todavía no hay movimientos.</div>';
+  return h+'<div class="list">'+all.map(function(o){return o.i?inRowHtml(o.x,t,y):rowHtml(o.x,false,true,t,y,true)}).join('')+'</div>';
 }
 
 function inicio(){
@@ -291,7 +463,8 @@ function inicio(){
   var rec=it.slice(-5).sort(byDate);
   var h='<div style="margin-bottom:8px"><p class="mu sub">Mis gastos de</p><h1 style="margin:0">'+cap(monthName(mk))+'</h1></div>';
   h+='<div class="hero"><p class="lbl">Gastado en '+monthName(mk)+'</p><p class="big" data-count="'+gast+'">'+money(gast)+'</p>'
-    +'<span class="chip">'+(cnt?cnt+(cnt===1?' gasto anotado':' gastos anotados'):'A\u00fan sin gastos este mes')+'</span></div>';
+    +'<span class="chip">'+(cnt?cnt+(cnt===1?' gasto anotado':' gastos anotados'):'A\u00fan sin gastos este mes')+'</span>'
+    +'<div style="position:relative;margin-top:10px"><span class="chip">\u{1F4B3} Tarjeta: '+money(saldoTotal())+'</span></div></div>';
   h+='<button class="btn" data-a="add">+ Agregar un gasto</button><h2>\u00daltimos gastos</h2>';
   if(!rec.length)return h+'<div class="empty"><b>\u{1F4DD}</b>Todav\u00eda no hay gastos.<br>Toca el bot\u00f3n amarillo para anotar el primero.</div>';
   return h+'<div class="list">'+rec.map(function(x){return rowHtml(x,false,true,t,y)}).join('')+'</div>';
@@ -355,12 +528,39 @@ function historial(){
 }
 
 /* ---------- formulario y teclado propio ---------- */
+function amtBox(){return'<div class="amt" id="fa" data-a="fld" data-v="amt"><span>$</span><div class="val" id="amtv"></div></div>'}
+function noteBox(){return'<div class="fld" id="fn" data-a="fld" data-v="note"><div class="val" id="notev"></div></div>'}
+function ciclo(){
+  var m=form.mon,a=[],i;
+  if(form.every===1)return'Cae todos los meses.';
+  if(form.every===12)return'Cae una vez al año, en '+MES[m-1]+'.';
+  for(i=0;i<6;i++)a.push(MES[(m-1+i*2)%12].slice(0,3));
+  return'Cae en: '+a.join(', ')+'.';
+}
+function reglaHtml(){
+  var h='<button class="back" data-a="back">← Volver</button><h1>'+(form.id?'Cambiar entrada de dinero':'Nueva entrada de dinero')+'</h1>';
+  h+='<label style="margin-top:6px">¿Cómo se llama?</label>'+noteBox();
+  h+='<label>¿Cuánto es?</label>'+amtBox();
+  h+='<label>¿Cada cuándo?</label><div class="seg">'+[[1,'Cada mes'],[2,'Cada 2 meses'],[12,'Cada año']].map(function(o){
+    return'<button style="font-size:17px" data-a="freq" data-v="'+o[0]+'" class="'+(form.every===o[0]?'on':'')+'">'+o[1]+'</button>';
+  }).join('')+'</div>';
+  h+='<label>Día del mes</label><div class="step"><button data-a="dayd" aria-label="Menos">−</button><b>'+form.day+'</b><button data-a="dayu" aria-label="Más">+</button></div>';
+  if(form.day>28)h+='<p class="sub mu" style="margin-top:6px">Si el mes no tiene ese día, cae el último día del mes.</p>';
+  if(form.every>1)h+='<label>'+(form.every===2?'Primer mes del ciclo':'Mes del año')+'</label><div class="step"><button data-a="mond" aria-label="Mes anterior">−</button><b>'+cap(MES[form.mon-1])+'</b><button data-a="monu" aria-label="Mes siguiente">+</button></div>';
+  h+='<p class="sub mu" style="margin-top:6px">'+ciclo()+'</p>';
+  h+='<label>Estado</label><div class="seg">'+[['on','Activa'],['off','En pausa']].map(function(o){
+    return'<button style="font-size:19px" data-a="onoff" data-v="'+o[0]+'" class="'+(form.off===(o[0]==='off')?'on':'')+'">'+o[1]+'</button>';
+  }).join('')+'</div>';
+  h+='<p class="err" id="err" role="alert"></p><button class="btn" data-a="save">Guardar</button>';
+  if(form.id)h+='<button class="more" data-a="delrule" style="border-color:var(--bad);color:var(--bad)">Borrar esta entrada</button>';
+  return h;
+}
 function formHtml(){
-  var r=form.kind==='recibo',s=r?svc(form.service):null;
-  var t=r?s.e+' Recibo de '+s.n.toLowerCase()+': \u00bfde cu\u00e1nto fue?':'\u00bfCu\u00e1nto gastaste?';
-  var h='<button class="back" data-a="back">\u2190 Volver</button><h1>'+t+'</h1>';
-  h+='<div class="amt" id="fa" data-a="fld" data-v="amt"><span>$</span><div class="val" id="amtv"></div></div>';
-  if(!r)h+='<label>\u00bfQu\u00e9 compraste?</label><div class="fld" id="fn" data-a="fld" data-v="note"><div class="val" id="notev"></div></div>';
+  var k=form.kind,r=k==='recibo',s=r?svc(form.service):null,t,h;
+  if(k==='regla')return reglaHtml();
+  t=r?s.e+' Recibo de '+s.n.toLowerCase()+': ¿de cuánto fue?':(k==='dinero'?'¿Cuánto dinero vas a agregar?':'¿Cuánto gastaste?');
+  h='<button class="back" data-a="back">← Volver</button><h1>'+t+'</h1>'+amtBox();
+  if(!r)h+='<label>'+(k==='dinero'?'¿De dónde es?':'¿Qué compraste?')+'</label>'+noteBox();
   return h+'<p class="err" id="err" role="alert"></p><button class="btn" data-a="save">Guardar</button>';
 }
 function fmtAmt(s){
@@ -371,7 +571,7 @@ function fmtAmt(s){
 function setVal(el,t,ph){if(!el)return;if(t){el.textContent=t;el.className='val'}else{el.textContent=ph;el.className='val ph'}}
 function paintForm(){
   setVal(document.getElementById('amtv'),fmtAmt(form.amt),'0');
-  setVal(document.getElementById('notev'),form.note,'Tortillas y leche');
+  setVal(document.getElementById('notev'),form.note,form.kind==='dinero'?'Ahorros':form.kind==='regla'?'Renta':'Tortillas y leche');
   var fa=document.getElementById('fa'),fn=document.getElementById('fn');
   if(fa)fa.className='amt'+(form.kb&&form.field==='amt'?' act':'');
   if(fn)fn.className='fld'+(form.kb&&form.field==='note'?' act':'');
@@ -381,7 +581,7 @@ function kbHtml(){
   if(form.field==='amt'){
     h='<div class="kr np">';
     ['1','2','3','4','5','6','7','8','9','.','0','bk'].forEach(function(k){h+='<button class="k" data-k="'+k+'"'+(k==='bk'?' aria-label="Borrar"':'')+'>'+(k==='bk'?'\u232B':k)+'</button>'});
-    return h+'</div><button class="k w" data-k="next" style="width:100%;min-height:54px;font-size:22px">'+(form.kind==='gasto'?'Siguiente \u2192':'Listo')+'</button>';
+    return h+'</div><button class="k w" data-k="next" style="width:100%;min-height:54px;font-size:22px">'+(form.kind==='gasto'||form.kind==='dinero'?'Siguiente \u2192':'Listo')+'</button>';
   }
   var low=function(c){return'<button class="k" data-k="'+c+'">'+(form.shift&&/[a-z\u00f1]/.test(c)?c.toUpperCase():c)+'</button>'};
   var row=function(s){return'<div class="kr" style="grid-template-columns:repeat(10,1fr)">'+s.split('').map(low).join('')+'</div>'};
@@ -402,7 +602,7 @@ function press(k){
   if(form.field==='amt'){
     if(k==='bk')form.amt=form.amt.slice(0,-1);
     else if(k==='next'){
-      if(form.kind==='gasto'){form.field='note';autoShift()}else form.kb=false;
+      if(form.kind==='gasto'||form.kind==='dinero'){form.field='note';autoShift()}else form.kb=false;
     }
     else if(k==='.'){if(form.amt.indexOf('.')<0)form.amt=(form.amt||'0')+'.'}
     else{
@@ -415,7 +615,7 @@ function press(k){
     else if(k==='sp'){if(form.note&&form.note.slice(-1)!==' '&&form.note.length<60)form.note+=' '}
     else if(k==='shift')form.shift=!form.shift;
     else if(k==='ac')form.acc=!form.acc;
-    else if(k==='ok')form.kb=false;
+    else if(k==='ok'){if(form.kind==='regla'&&form.note&&!form.amt)form.field='amt';else form.kb=false}
     else if(form.note.length<60){
       var c=k,v='aeiou'.indexOf(k);
       if(form.acc&&v>=0)c='\u00e1\u00e9\u00ed\u00f3\u00fa'.charAt(v);
@@ -428,31 +628,49 @@ function press(k){
 }
 
 function render(keep){
-  var v=document.getElementById('v'),nav=document.getElementById('nav');
+  var v=document.getElementById('v'),nav=document.getElementById('nav'),st=v.scrollTop;
   if(form){v.innerHTML=formHtml();nav.style.display='none';paintForm();paintKb()}
   else{
-    v.innerHTML=({inicio:inicio,recibos:recibos,historial:historial})[view]();
+    v.innerHTML=({inicio:inicio,tarjeta:tarjeta,recibos:recibos,historial:historial})[view]();
     nav.style.display='flex';paintKb();
-    nav.innerHTML=[['inicio','\u{1F3E0}','Inicio'],['recibos','\u{1F9FE}','Recibos'],['historial','\u{1F4D6}','Historial']].map(function(t){
+    nav.innerHTML=[['inicio','\u{1F3E0}','Inicio'],['tarjeta','\u{1F4B3}','Tarjeta'],['recibos','\u{1F9FE}','Recibos'],['historial','\u{1F4D6}','Historial']].map(function(t){
       var on=view===t[0];
       return'<button data-a="tab" data-v="'+t[0]+'" class="'+(on?'on':'')+(on&&!keep?' b':'')+'"><span>'+t[1]+'</span>'+t[2]+'</button>';
     }).join('');
   }
-  if(!keep){v.scrollTop=0;v.classList.remove('in');void v.offsetWidth;v.classList.add('in')}
+  if(!keep){v.scrollTop=0;v.classList.remove('in');void v.offsetWidth;v.classList.add('in')}else v.scrollTop=st;
   if(!form&&view==='inicio')countUp();
 }
 
 /* ---------- acciones ---------- */
-function openForm(f){f.amt='';f.note='';f.field='amt';f.kb=true;f.shift=true;f.acc=false;form=f;render()}
+function openForm(f){f.amt=f.amt||'';f.note=f.note||'';f.field=f.field||'amt';f.kb=f.kb===undefined?true:f.kb;f.shift=f.note==='';f.acc=false;form=f;render()}
 function err(m){document.getElementById('err').textContent=m}
 function guardar(){
+  if(form.kind==='regla')return guardarRegla();
   var n=num(form.amt);
   if(!(n>0)){form.field='amt';form.kb=true;paintForm();paintKb();return err('Escribe cu\u00e1nto fue, solo con n\u00fameros.')}
+  if(form.kind==='dinero'){
+    db.inc.push({id:'m_'+Date.now(),date:today(),amount:Math.round(n*100)/100,note:form.note.trim()||'Dinero guardado',rule:null,p:1});
+    view='tarjeta';form=null;save();render();pushPending();
+    burst();pop('\u00a1Dinero agregado!','\u{1F4B5}');return;
+  }
   db.items.push({id:Date.now(),date:today(),amount:Math.round(n*100)/100,note:form.kind==='gasto'?form.note.trim():'',service:form.kind==='recibo'?form.service:null,p:1});
   if(form.kind==='recibo')view='recibos';
   if(form.kind==='recibo'&&form.service==='tel')marcarVisto(db.items[db.items.length-1].id);
   form=null;save();render();pushPending();
   burst();pop('\u00a1Guardado!','\u2705');
+}
+function guardarRegla(){
+  var nm=form.note.trim(),n=num(form.amt);
+  if(!nm){form.field='note';form.kb=true;autoShift();paintForm();paintKb();return err('Escribe cómo se llama.')}
+  if(!(n>0)){form.field='amt';form.kb=true;paintForm();paintKb();return err('Escribe cuánto es, solo con números.')}
+  var t=today(),start=form.every===1?mkey(t):t.slice(0,4)+'-'+pad(form.mon);
+  var r=form.id?ruleOf(form.id):null;
+  if(!r){r={id:'r'+Date.now(),e:'\u{1F4B5}',last:''};db.rules.push(r)}
+  r.n=nm;r.amt=Math.round(n*100)/100;r.every=form.every;r.day=form.day;r.start=start;r.off=form.off;
+  r.from=t;r.p=1; /* los cambios cuentan desde hoy: no se abonan fechas pasadas */
+  form=null;view='tarjeta';save();render();pushPending();procesarEntradas();
+  burst();pop('¡Guardado!','✅');
 }
 function atras(){
   if(form){form=null;render(true);return true}
@@ -466,10 +684,25 @@ document.addEventListener('click',function(e){
   var a=t.dataset.a,v=t.dataset.v;
   if(a==='tab'){view=v;render()}
   else if(a==='add')openForm({kind:'gasto'});
+  else if(a==='addmoney')openForm({kind:'dinero'});
+  else if(a==='newrule')openForm({kind:'regla',every:1,day:1,mon:Number(mkey(today()).slice(5)),off:false,field:'note'});
+  else if(a==='rule'){var rr=ruleOf(v);if(rr)openForm({kind:'regla',id:rr.id,every:rr.every,day:rr.day,mon:Number(rr.start.split('-')[1]),off:!!rr.off,amt:String(rr.amt),note:rr.n,field:'amt',kb:false})}
+  else if(a==='freq'){form.every=Number(v);form.kb=false;render(true)}
+  else if(a==='dayu'){form.day=Math.min(31,form.day+1);form.kb=false;render(true)}
+  else if(a==='dayd'){form.day=Math.max(1,form.day-1);form.kb=false;render(true)}
+  else if(a==='monu'){form.mon=form.mon%12+1;form.kb=false;render(true)}
+  else if(a==='mond'){form.mon=(form.mon+10)%12+1;form.kb=false;render(true)}
+  else if(a==='onoff'){form.off=(v==='off');form.kb=false;render(true)}
+  else if(a==='delrule'){
+    if(confirm('\u00bfBorrar esta entrada de dinero? Lo que ya entr\u00f3 se queda en la tarjeta.')){var id0=form.id;db.rules=db.rules.filter(function(x){return x.id!==id0});db.pdr.push(id0);form=null;view='tarjeta';save();render();pushPending()}
+  }
+  else if(a==='deli'){
+    if(confirm('\u00bfBorrar este movimiento de dinero?')){db.inc=db.inc.filter(function(x){return String(x.id)!==v});db.pdi.push(v);save();render(true);pushPending()}
+  }
   else if(a==='svc')openForm({kind:'recibo',service:v});
   else if(a==='hist'){hist=v;render()}
   else if(a==='more'){dayLimit+=30;render(true)}
-  else if(a==='fld'){if(form.kind==='gasto'||v==='amt'){form.field=v;form.kb=true;if(v==='note')autoShift();paintForm();paintKb()}}
+  else if(a==='fld'){if(form.kind!=='recibo'||v==='amt'){form.field=v;form.kb=true;if(v==='note')autoShift();paintForm();paintKb()}}
   else if(a==='back')atras();
   else if(a==='save')guardar();
   else if(a==='del'){
@@ -485,6 +718,8 @@ startSync();
 programarRecordatorio();
 permisoSegundoPlano();
 window.addEventListener('online',function(){startSync();pushPending()});
+document.addEventListener('visibilitychange',function(){if(!document.hidden)procesarEntradas()});
+procesarEntradas();
 </script>
 </body>
 </html>

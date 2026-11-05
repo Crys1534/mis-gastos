@@ -7,6 +7,7 @@ App sencilla para organizar los gastos del mes, pensada para una persona mayor: 
 - Inicio: contador de lo gastado en el mes y los últimos gastos.
 - Agregar un gasto: monto y qué compró; la fecha se pone sola. Tiene su propio teclado dentro de la app (no abre el del celular).
 - Recibos: luz, agua, gas y teléfono, comparados con el mes pasado (verde = gastó menos, rojo = gastó más).
+- Tarjeta: saldo disponible (entradas de dinero menos gastos). Se puede agregar dinero que ya se tenía guardado. Las entradas de dinero (pensión, aguinaldo, renta, Tarjeta Regia Plus, Pensión 60-64) se abonan solas el día que les toca (cada mes, cada 2 meses o cada año) y se pueden cambiar o crear nuevas desde la app. Se guardan en Firebase, colecciones `entradas_mama` y `reglas_mama`.
 - Historial: por día, por mes y por año.
 - Animaciones: contador que sube, lluvia de monedas y estrellas al guardar, rebote en las pestañas. No usa sonidos.
 
