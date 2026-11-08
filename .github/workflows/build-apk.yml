@@ -35,7 +35,7 @@ jobs:
           grep -q "background-runner/android/src/main/libs" $G || sed -i "s#dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'#&\n        dirs '../../node_modules/@capacitor/background-runner/android/src/main/libs', 'libs'#" $G
           grep -n "background-runner" $G
           M=android/app/src/main/AndroidManifest.xml
-          for P in POST_NOTIFICATIONS SCHEDULE_EXACT_ALARM RECEIVE_BOOT_COMPLETED; do
+          for P in POST_NOTIFICATIONS SCHEDULE_EXACT_ALARM USE_EXACT_ALARM RECEIVE_BOOT_COMPLETED; do
             grep -q "android.permission.$P" $M || sed -i "s#<application#<uses-permission android:name=\"android.permission.$P\" />\n    <application#" $M
           done
           npx cap sync android
@@ -59,3 +59,51 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: mis-gastos.apk
+
+  prueba:
+    name: Prueba de notificaciones
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Probar la lógica del aviso del recibo
+        run: node smoke/runner.test.js
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: mis-gastos-apk
+
+      - name: Instalar la herramienta para hablar con la app
+        run: |
+          cd smoke
+          npm init -y >/dev/null
+          npm install ws@8.18.0
+
+      - name: Activar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Probar en un Android simulado
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: bash smoke/prueba.sh
+
+      - name: Guardar fotos y registros de la prueba
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prueba-notificaciones
+          path: salida/
+          if-no-files-found: ignore

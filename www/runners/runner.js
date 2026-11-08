@@ -37,6 +37,7 @@ addEventListener('checkTel', function (resolve, reject, args) {
   fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body })
     .then(function (res) { return res.json(); })
     .then(function (rows) {
+      if (!Array.isArray(rows)) throw new Error('respuesta inesperada de Firebase'); /* ej. sin permisos: no memorizar nada */
       var ids = [];
       for (var i = 0; i < rows.length; i++) {
         if (rows[i] && rows[i].document && rows[i].document.name) {
@@ -59,4 +60,17 @@ addEventListener('checkTel', function (resolve, reject, args) {
       resolve();
     })
     .catch(function (e) { reject(e); });
+});
+
+/* Solo para pruebas: manda al instante el mismo aviso que sale cuando se paga el recibo */
+addEventListener('probarAviso', function (resolve, reject) {
+  try {
+    CapacitorNotifications.schedule([{
+      id: 99,
+      title: 'Mis gastos',
+      body: 'Recibo del Teléfono fue pagado',
+      scheduleAt: new Date(Date.now() + 1000)
+    }]);
+    resolve();
+  } catch (e) { reject(e); }
 });

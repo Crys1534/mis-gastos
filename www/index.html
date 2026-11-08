@@ -143,15 +143,15 @@ function save(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}}
 function notiPlugin(){try{return window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.LocalNotifications}catch(e){return null}}
 /* Recordatorio diario a las 10 PM: ¿Que compraste hoy? */
 function programarRecordatorio(){
-  var N=notiPlugin();if(!N)return;
-  N.requestPermissions().then(function(r){
+  var N=notiPlugin();if(!N)return Promise.resolve();
+  return N.requestPermissions().then(function(r){
     if(!r||r.display!=='granted')return;
     return N.createChannel({id:'recordatorio',name:'Recordatorio diario',description:'Aviso diario para anotar los gastos',importance:4,visibility:1}).catch(function(){})
       .then(function(){return N.cancel({notifications:[{id:22}]}).catch(function(){})})
       .then(function(){return N.schedule({notifications:[{
         id:22,
         title:'Mis gastos',
-        body:'\u00bfQu\u00e9 compraste hoy? Reg\u00edstralo',
+        body:'¿Ya registraste tus gastos de hoy? ¡Organízate!',
         channelId:'recordatorio',
         schedule:{on:{hour:22,minute:0},allowWhileIdle:true}
       }]})});
@@ -299,6 +299,10 @@ var SEEDS=[
   {id:'regia',n:'Tarjeta Regia Plus',e:'\u{1F4B3}',amt:2000,every:2,day:7,start:'2026-11',off:false},
   {id:'pension60',n:'Pensión 60-64 años',e:'\u{1F475}',amt:3100,every:2,day:1,start:'2026-11',off:true}
 ];
+/* cuenta desde el dia 1 del mes en que se creo: lo que ya cayo este mes tambien se abona */
+function desdeMes(r){return(r.from||'0000-00').slice(0,7)+'-01'}
+/* ya se abono esa fecha, o ya se abono algo en ese mismo mes (asi cambiar el dia no abona dos veces) */
+function yaAbonada(r,d){return!!r.last&&(d<=r.last||mkey(d)===mkey(r.last))}
 function dim(y,m){return new Date(y,m,0).getDate()}
 function fechaOcc(y,m,day){return y+'-'+pad(m)+'-'+pad(Math.min(day,dim(y,m)))}
 /* fechas que ya tocaron (desde que se creó la entrada hasta "hasta") y que todavía no se han abonado */
@@ -306,7 +310,7 @@ function ocurrencias(r,hasta){
   var out=[],s=r.start.split('-'),y=Number(s[0]),m=Number(s[1]),e=hasta.split('-'),ey=Number(e[0]),em=Number(e[1]),n=0,d;
   while((y<ey||(y===ey&&m<=em))&&n<800){
     d=fechaOcc(y,m,r.day);
-    if(d>=r.from&&d<=hasta&&(!r.last||d>r.last))out.push(d);
+    if(d>=desdeMes(r)&&d<=hasta&&!yaAbonada(r,d))out.push(d);
     m+=r.every;while(m>12){m-=12;y++}
     n++;
   }
@@ -317,7 +321,7 @@ function proxima(r,t){
   var s=r.start.split('-'),y=Number(s[0]),m=Number(s[1]),n=0,d;
   while(n<800){
     d=fechaOcc(y,m,r.day);
-    if(d>=t&&d>=r.from&&(!r.last||d>r.last))return d;
+    if(d>=t&&d>=desdeMes(r)&&!yaAbonada(r,d))return d;
     m+=r.every;while(m>12){m-=12;y++}
     n++;
   }
@@ -715,8 +719,7 @@ try{
 }catch(e){}
 render();
 startSync();
-programarRecordatorio();
-permisoSegundoPlano();
+programarRecordatorio().then(permisoSegundoPlano);
 window.addEventListener('online',function(){startSync();pushPending()});
 document.addEventListener('visibilitychange',function(){if(!document.hidden)procesarEntradas()});
 procesarEntradas();
