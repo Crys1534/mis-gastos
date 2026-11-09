@@ -80,8 +80,24 @@ if grep -q "registraste tus gastos de hoy" $OUT/notificaciones_2.txt && grep -q 
 adb shell cmd statusbar expand-notifications; sleep 2
 adb exec-out screencap -p > $OUT/2_notificaciones.png
 
-adb shell dumpsys alarm | grep -c "$PKG" | xargs -I{} echo "alarmas de la app después de que sonó: {}"
-[ "$(adb shell dumpsys alarm | grep -c "$PKG")" -gt 0 ] && ok "la alarma sigue programada para el día siguiente" || bad "la alarma no quedó programada para el día siguiente"
+echo "== ¿se repite al día siguiente?"
+SIG=$(date -u -d "$DIA + 1 day" +%Y-%m-%d)
+echo "alarma pendiente de la app:"
+adb shell dumpsys alarm | grep -A1 "$PKG}" | grep -o "origWhen=[0-9-]* [0-9:]*" | sort -u
+adb shell dumpsys alarm | grep -A1 "$PKG}" | grep -q "origWhen=$SIG 22:00" && ok "ya quedó programada la alarma del $SIG a las 22:00" || bad "no hay alarma programada para el $SIG a las 22:00"
+adb shell "date -s '$SIG 21:59:40'" >/dev/null
+sleep 40
+echo "hora del celular simulado: $(adb shell date | tr -d '\r')"
+adb shell dumpsys notification --noredact > $OUT/notificaciones_3.txt
+CUANDO=$(python3 - <<'PY'
+import re,datetime
+t=open('salida/notificaciones_3.txt',encoding='utf-8',errors='ignore').read()
+m=re.search(r'\|22\|null\|.*?\bwhen=(\d+)',t,re.S)
+print(datetime.datetime.fromtimestamp(int(m.group(1))/1000,datetime.timezone.utc).strftime('%Y-%m-%d %H:%M') if m else '')
+PY
+)
+echo "el recordatorio salió por última vez: $CUANDO (UTC)"
+[ "${CUANDO%% *}" = "$SIG" ] && ok "al día siguiente ($SIG) volvió a sonar a las 22:00: es diario" || bad "al día siguiente NO volvió a sonar"
 
 adb logcat -d | grep -i -E "misgastos|BackgroundRunner|Capacitor/|LocalNotif" | tail -60 > $OUT/registro.txt
 echo; [ $fail -eq 0 ] && echo "TODO BIEN" || echo "HUBO FALLAS"
